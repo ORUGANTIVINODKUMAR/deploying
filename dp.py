@@ -1,13 +1,18 @@
-# REMOVE synthetic K-1 entries ONLY FOR SORTING
-    clean_income = [e for e in income if not str(e[0]).startswith("K1::")]
 
-    # Now sort only REAL pages
-    clean_income.sort(key=lambda e:(get_form_priority(e[2],'Income'), e[0], e[1]))
+        p, idx, _ = entry
 
-        # Restore synthetic K-1 groups after sorting
-    # (They must be present so K-1 bookmark block runs)
-    clean_income += [e for e in income if str(e[0]).startswith("K1::")]
+        # Synthetic K-1 key expansion -------------------------
+        if p.startswith("K1::"):
+            key = p
+            real_entries = k1_payload.get(key, [])
+            if not real_entries:
+                return
 
-    income = clean_income
-
-    
+            for i, real_entry in enumerate(real_entries):
+                append_and_bookmark(
+                    real_entry,
+                    parent,
+                    title if i == 0 and with_bookmark else "",
+                    with_bookmark=(i == 0 and with_bookmark),
+                )
+            return
