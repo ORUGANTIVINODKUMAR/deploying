@@ -1,68 +1,42 @@
 
-                # --- Detect Schedule K-1 / Form 1065 / Statement A / QBI pages ---
-                # --- Detect Schedule K-1 / Form 1065 / and related pages (QBI, Statement A, etc.) ---
-                text_lower = tiered.lower()
-                ein_num = extract_ein_number(tiered)
+        # ---- K-1 (Form 1065) grouping synthesis ----
+    k1_payload = {}      # key -> list of (path, page_index, 'K-1')
+    k1_pages_seen = set()  # to mark pages already grouped
+    # --- 🩹 Move all raw K-1 entries into k1_pages before grouping ---
+    for (path, idx, form) in list(income):
+        if form == "K-1":
+            text = extract_text(path, idx).lower()
+            ein = extract_ein_number(text)
+            k1_type = k1_form_type.get(ein, "1065")  
 
-                # --- Detect Schedule K-1 / Form 1065 / Statement A / QBI / worksheet pages ---
-                text_lower = tiered.lower()
-                ein_num = extract_ein_number(tiered)
+            if not ein and k1_pages:
+                ein = list(k1_pages.keys())[-1]   # reuse last EIN if missing
+            if ein:
+                k1_pages.setdefault(ein, []).append((path, idx, "K-1"))
+                # remove from income so it doesn't create a stray K-1 later
+                income.remove((path, idx, form))
 
-                # ✅ If EIN missing (common on continuation or basis pages), reuse the previous one
-                # Track EIN across pages
-                if not ein_num:
-                    ein_num = last_ein_seen
-                else:
-                    last_ein_seen = ein_num
+    for ein, pages in k1_pages.items():
+        if pages:
+            key = f"K1::{k1_type}::{ein}"
+            # store real pages
+            k1_payload[key] = [(p, i, "K-1") for (p, i, _) in pages]
+            # remember them so we don’t process twice
+            for (p, i, _) in pages:
+                k1_pages_seen.add((p, i))
+            # add single synthetic entry
+            income.append((key, -1, "K-1"))
+           # remove synthetic K-1 entries before sorting
+           #income = [e for e in income if not str(e[0]).startswith("K1::")]
 
+            print(f"[DEBUG] Added unified K-1 package for EIN={ein} with {len(pages)} page(s)", file=sys.stderr)
 
-                # ✅ Detect any K-1-related page (expanded keyword list)
-                k1_keywords = [
-                    "schedule k-1", "form 1065", "form 1120-s", "form 1041",
-                    "statement a", "qualified business income", "section 199a",
-                    "qbi pass-through", "qbi pass through entity reporting",
-                    # new worksheet / continuation phrases
-                    "basis worksheet", "partner's basis worksheet",
-                    "allocation of losses and deductions",
-                    "partner's share of income", "at-risk basis", "section 704(c)",
-                    "k-1 supplemental information", "continuation statement",
-                    "additional information from schedule k-1", "passive activity purposes",
-                    
-                ]
-                is_k1_page = any(k in text_lower for k in k1_keywords)
-
-                # NEW — Detect TRUE form type
-                is_1120s = bool(re.search(r"schedule\s*k-1.*form\s*1120[-\s]*s", text_lower))
-                is_1065 = bool(re.search(r"schedule\s*k-1.*form\s*1065", text_lower))
-                
-                is_1041 = bool(re.search(r"schedule\s*k-1.*form\s*1041", text_lower))
-
-                if (is_1065 or is_1120s or is_1041 or is_k1_page) and ein_num:
-
-                # Assign correct form type
-                    k1_form_type[ein_num] = (
-                        "1065" if is_1065 else
-                        "1120S" if is_1120s else
-                        "1041" if is_1041 else
-                        k1_form_type.get(ein_num, "1065")
-                    )
-
-                    # Extract company / partnership name
-                    company = extract_k1_company(tiered)
+    # 🧹 remove any individual K-1 pages that were grouped
+    income = [
+        e for e in income
+        if not (e[2] == "K-1" and not e[0].startswith("K1::") and (e[0], e[1]) in k1_pages_seen)
+    ]
+    print(f"[DEBUG] Cleaned raw K-1 pages; synthetic K1 groups = {[x[0] for x in income if 'K1::' in x[0]]}", file=sys.stderr)
 
 
-
-                    k1_pages.setdefault(ein_num, []).append((path, i, "K-1"))
-                    if company:
-                        company = clean_k1_company_name(company)
-                        k1_names[ein_num] = company
-
-
-
-
-
-                    print(
-                        f"[DEBUG] Unified K-1 page: {os.path.basename(path)} p{i+1} "
-                        f"EIN={ein_num}, Company={company}, Form={k1_form_type[ein_num]}",
-                        file=sys.stderr
-                    )
+            
