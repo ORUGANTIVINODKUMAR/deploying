@@ -914,6 +914,7 @@ def is_1099r_page(text: str) -> bool:
     # Final requirement
     return matchA and matchB
 
+
 def classify_text(text: str) -> Tuple[str, str]:
     normalized = re.sub(r'\s+', '', text.lower())
     t = text.lower()
@@ -921,19 +922,6 @@ def classify_text(text: str) -> Tuple[str, str]:
     lower = text.lower()
       # Detect W-2 pages by their header phrases
     t = re.sub(r"\s+", " ", text.lower()).strip()
-    # --- Detect Schedule K-1 (Form 1065) ---
-    lower = t.lower()
-
-    # Condition: MUST contain "w-2" or "w2"
-    has_w2 = ("w-2" in lower) or ("w2" in lower)
-
-    # Supporting signals
-    has_comp = "wages, tips, other compensation" in lower
-    has_emp_info = ("employer's name" in lower and "address" in lower)
-
-    # Final combined condition
-    if has_w2 and (has_comp or has_emp_info):
-        return "Income", "W-2"
 
 
     #Property Tax
@@ -992,13 +980,25 @@ def classify_text(text: str) -> Tuple[str, str]:
         or "will be required to send you one or more corrections" in t
         #1042-S
         or "explanation of codes" in t
-        or "einbehaltuxvxng der steuern" in t
+        or "einbehaltung der steuern" in t
     ):
         return "Others", "Unused"
 
-    if is_1099r_page(t):
-        return "Income", "1099-R"
-
+    #1099-R
+    r1099 = [
+        #"federal income tax withheld",
+        "taxable amount iras",
+        "contrib or insurance premiums",
+        "6 net unrealized appreciation",
+        "13 date of 17 local tax withheld 18 name",
+        "total employee contributions the irs",
+        "2b taxable amount total copy b",
+        
+        
+    ]
+    for pat in r1099:
+        if pat in lower:
+            return "Income", "1099-R"
 
     # --- Detect 1099-G (State Income Tax Refund) ---
     g1099 = [
@@ -1107,8 +1107,22 @@ def classify_text(text: str) -> Tuple[str, str]:
         return "Income", "1099-SA"
 
    
-    # 1) Detect W-2 pages by key header phrases
-    
+    lower = t.lower()
+
+    # --- Mandatory Condition ---
+    has_w2 = ("w-2" in lower) or ("w2" in lower)
+
+    # --- Supporting Conditions (any one can be true) ---
+    supporting = (
+        "wages, tips, other compensation" in lower or
+        "wage and tax statement" in lower or
+        ("employer's name" in lower and "address" in lower)
+    )
+
+    # --- Final combined rule ---
+    if has_w2 and supporting:
+        return "Income", "W-2"
+
 
     #5498-SA
     # --- 5498-SA detection (more tolerant OCR patterns) ---
@@ -1127,8 +1141,7 @@ def classify_text(text: str) -> Tuple[str, str]:
     if any(re.search(pat, lower) for pat in sa5498_front_patterns):
         return "Expenses", "5498-SA"
 
-        # --- Detect Schedule K-1 (Form 1065) ---
-    # --- Detect Schedule K-1 (Form 1065 / 1120-S / 1041) and Statement A (QBI) pages ---
+     # --- Detect Schedule K-1 (Form 1065 / 1120-S / 1041) and Statement A (QBI) pages ---
     if any(
         kw in lower
         for kw in [
@@ -1153,8 +1166,7 @@ def classify_text(text: str) -> Tuple[str, str]:
         if ein_match:
             print(f"[DEBUG] classify_text: Detected K-1 Form 1065 EIN={ein_match.group(0)}", file=sys.stderr)
         return "Income", "K-1"
-
-   
+    
     if is_unused_page(text):
         return "Unknown", "Unused"
     if '1098-t' in t: return 'Expenses', '1098-T'
@@ -1323,7 +1335,7 @@ def classify_text(text: str) -> Tuple[str, str]:
    
      # E*TRADE text in parts
    
-
+   
 
     con_unused = [
         "etrade from morgan stanley 1099 consolidated tax statement for 2023 provides your official tax information",
@@ -1338,71 +1350,34 @@ def classify_text(text: str) -> Tuple[str, str]:
     for pat in con_unused:
         if pat in lower:
             return "Others", "Unused"  
-    
     #---------------------------Consolidated-1099----------------------------------#
 
     #---------------------------1099-INT----------------------------------#
- #---------------------------1099-INT----------------------------------#
     #1099-INT for page 1
-    lower = re.sub(r"\s+", " ", text.lower())
-   
     int_front = [
-        "form 1099-int",
-        "interest income",
-        "copy b",
-        "early withdrawal penalty",
-        "tax-exempt interest",
-        "bond premium on treasury obligations",
-        "bond premium on tax-exempt bond",
-        "specified private activity bond",
-    ]
-    # Also allow number-prefixed matches (e.g., "8 tax-exempt interest")
-    int_front_regex = [
-        r"\d+\s*tax-exempt interest",
-        r"\d+\s*specified private activity bond",
-        r"\d+\s*bond premium on treasury obligations",
-        r"\d+\s*bond premium on tax-exempt bond",
-    ]
-    found_int_front = any(pat in lower for pat in int_front) or any(re.search(p, lower) for p in int_front_regex)
+        "3 Interest on U.S. Savings Bonds and Treasury obligations",
+        #"Investment expenses",
+        "Tax-exempt interest",
+        "ond premium on Treasury obligations",
+        "withdrawal penalty",
    
-    int_unused = [
-    # Box descriptions from instructions section
-        "box 1. shows taxable interest",
-        "box 2. shows interest or principal forfeited",
-        "box 3. shows interest on u.s. savings bonds",
-        "box 4. shows backup withholding",
-        "box 5. any amount shown is your share of investment expenses",
-        "box 6. shows foreign tax paid",
-        "box 7. shows the country or u.s. possession",
-        "box 8. shows tax-exempt interest",
-        "box 9. shows tax-exempt interest subject to the alternative minimum tax",
-        "box 10. for a taxable or tax-exempt covered security",
-        "box 11. for a taxable covered security",
-        "box 12. for a u.s. treasury obligation that is a covered security",
-        "box 13. for a tax-exempt covered security",
-        "box 14. shows cusip number",
-        "boxes 15-17. state tax withheld",
-   
-    # Common generic phrases in the instruction block
-        "instructions for recipient",
-        "for more information, see form 8912",
-        "see the instructions above for a taxable covered security",
-        "see pub. 550",
-        "report the accrued market discount",
-        "see regulations section 1.171",
-        "future developments",
-        "free file program",
-        "nominees. if this form includes amounts belonging",
-        "the promotional bonus you",
-        "discover bank takes from the interest paid",
-        "itemized list of interest paid",
-        "once your form is available online to view",
-        ""
     ]
 
-    found_int_unused = any(pat in lower for pat in int_unused)
-   
-    # ✅ Priority: front wins
+    int_unused = [
+        "Box 1. Shows taxable interest paid to you ",
+        "Box 2. Shows interest or principal forfeited",
+        "Box 3. Shows interest on U.S. Savings Bonds",
+        "Box 8. Shows tax-exempt interest paid to",
+        "Box 10. For a taxable or tax-exempt covered security",
+        "if you are registered in the account",
+        "subject to reporting when paid regardless",
+        "if we are required to withhold tax"
+    ]
+    lower = text.lower()
+    found_int_front = any(pat.lower() in lower for pat in int_front)
+    found_int_unused = any(pat.lower() in lower for pat in int_unused)
+
+# 🔁 Priority: 1099-INT > Unused
     if found_int_front:
         return "Income", "1099-INT"
     elif found_int_unused:
@@ -1451,9 +1426,8 @@ def classify_text(text: str) -> Tuple[str, str]:
         return "Others", "Unused"
 
     #---------------------------1098-Mortgage----------------------------------#
-#3) fallback form detectors
-    if 'w-2' in t or 'w2' in t: return 'Income', 'W-2'
-    #if '1099-int' in t or 'interest income' in t: return 'Income', '1099-INT'
+
+    if '1099-int' in t or 'interest income' in t: return 'Income', '1099-INT'
     #if '1099-div' in t: return 'Income', '1099-DIV'
     #if 'form 1099-div' in t: return 'Income', '1099-DIV'
    
@@ -1473,10 +1447,8 @@ def classify_text(text: str) -> Tuple[str, str]:
    
 
    
-# Detect W-2 pages by their header phrases
-    if 'wage and tax statement' in t or ("employer's name" in t and 'address' in t):
-        return 'Income', 'W-2'
-   
+
+
 # --------------------------- 1095-C --------------------------- #
 def extract_1095c_bookmark(text: str) -> str:
     """
