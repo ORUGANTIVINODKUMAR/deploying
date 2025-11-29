@@ -1,21 +1,20 @@
-# Synthetic K-1 key expansion -------------------------
-        if p.startswith("K1::"):
-            key = p
-            real_entries = k1_payload.get(key, [])
-            if not real_entries:
-                return
+if form == 'K-1':
 
-            for i, real_entry in enumerate(real_entries):
-                append_and_bookmark(
-                    real_entry,
-                    parent,
-                    title if i == 0 and with_bookmark else "",
-                    with_bookmark=(i == 0 and with_bookmark),
+                # STEP 1 — Append ALL real K-1 pages FIRST (no bookmarks yet)
+                for ein, pages in k1_pages.items():
+                    sorted_pages = sorted(
+                        pages,
+                        key=lambda x: k1_page_priority(extract_text(x[0], x[1]))
+                    )
+                    for (p, idx, _) in sorted_pages:
+                        append_and_bookmark((p, idx, "K-1"), None, "", with_bookmark=False)
+
+                # STEP 2 — NOW build bookmarks (page numbers now exist)
+                build_k1_bookmarks(
+                    merger, root,
+                    k1_pages, k1_names,
+                    extract_text, append_and_bookmark, is_unused_page
                 )
-            return
 
-        # Skip duplicates -------------------------------------
-        sig = (p, idx)
-        if sig in seen_pages:
-            return
-        seen_pages[sig] = True
+                continue
+        
