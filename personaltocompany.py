@@ -1107,21 +1107,6 @@ def classify_text(text: str) -> Tuple[str, str]:
         return "Income", "1099-SA"
 
    
-    lower = t.lower()
-
-    # --- Mandatory Condition ---
-    has_w2 = ("w-2" in lower) or ("w2" in lower)
-
-    # --- Supporting Conditions (any one can be true) ---
-    supporting = (
-        "wages, tips, other compensation" in lower or
-        "wage and tax statement" in lower or
-        ("employer's name" in lower and "address" in lower)
-    )
-
-    # --- Final combined rule ---
-    if has_w2 and supporting:
-        return "Income", "W-2"
 
 
     #5498-SA
@@ -1254,7 +1239,22 @@ def classify_text(text: str) -> Tuple[str, str]:
         if pat in lower:
             return "Others", "Unused"
        
-       
+    lower = t.lower()
+
+    # --- Mandatory Condition ---
+    has_w2 = ("w-2" in lower) or ("w2" in lower)
+
+    # --- Supporting Conditions (any one can be true) ---
+    supporting = (
+        "wages, tips, other compensation" in lower or
+        "wage and tax statement" in lower or
+        ("employer's name" in lower and "address" in lower)
+    )
+
+    # --- Final combined rule ---
+    if has_w2 and supporting:
+        return "Income", "W-2"
+
         #---------------------------1099-DIV----------------------------------#
     #1099-INT for page 1
     div_front = [
