@@ -1,199 +1,70 @@
+# --- Detect Schedule K-1 / Form 1065 / Statement A / QBI pages ---
+                # --- Detect Schedule K-1 / Form 1065 / and related pages (QBI, Statement A, etc.) ---
+                text_lower = tiered.lower()
+                ein_num = extract_ein_number(tiered)
 
-# Tracks merged PDF page numbers for each real (path, idx) K-1 page
-k1_page_map = {}
-def reorder_k1_pages(pages):
-    """
-    Sort K-1 pages in correct IRS order:
-    1. Main K-1 form page
-    2. Partner/shareholder information
-    3. Supplemental info
-    4. Statement A (QBI)
-    5. Section 199A
-    6. Rental activity
-    7. Basis worksheets
-    8. Continuation statements
-    """
+                # --- Detect Schedule K-1 / Form 1065 / Statement A / QBI / worksheet pages ---
+                text_lower = tiered.lower()
+                ein_num = extract_ein_number(tiered)
 
-    def get_score(text):
-        t = text.lower()
+                # ✅ If EIN missing (common on continuation or basis pages), reuse the previous one
+                # Track EIN across pages
+                if not ein_num:
+                    ein_num = last_ein_seen
+                else:
+                    last_ein_seen = ein_num
 
-        # 1. Main federal K-1 page
-        if "schedule k-1" in t and ("form 1065" in t or "form 1120-s" in t or "form 1041" in t):
-            return 1
 
-        # 2. Personal info sections
-        if "information about the partner" in t:
-            return 2
-        if "information about the shareholder" in t:
-            return 2
-        if "partner's share" in t:
-            return 3
-        if "shareholder's share" in t:
-            return 3
+                # ✅ Detect any K-1-related page (expanded keyword list)
+                k1_keywords = [
+                    "schedule k-1", "form 1065", "form 1120-s", "form 1041",
+                    "statement a", "qualified business income", "section 199a",
+                    "qbi pass-through", "qbi pass through entity reporting",
+                    # new worksheet / continuation phrases
+                    "basis worksheet", "partner's basis worksheet",
+                    "allocation of losses and deductions",
+                    "partner's share of income", "at-risk basis", "section 704(c)",
+                    "k-1 supplemental information", "continuation statement",
+                    "additional information from schedule k-1", "passive activity purposes",
+                    
+                ]
+                is_k1_page = any(k in text_lower for k in k1_keywords)
 
-        # 3. Supplement pages
-        if "supplemental information" in t:
-            return 4
-        if "additional information" in t:
-            return 4
+                # NEW — Detect TRUE form type
+                is_1120s = bool(re.search(r"schedule\s*k-1.*form\s*1120[-\s]*s", text_lower))
+                is_1065 = bool(re.search(r"schedule\s*k-1.*form\s*1065", text_lower))
+                
+                is_1041 = bool(re.search(r"schedule\s*k-1.*form\s*1041", text_lower))
 
-        # 4. QBI pages
-        if "statement a" in t:
-            return 5
-        if "section 199a" in t:
-            return 5
-        if "qbi" in t:
-            return 5
+                if (is_1065 or is_1120s or is_1041 or is_k1_page) and ein_num:
 
-        # 5. Rental real estate pages
-        if "rental real estate activity" in t:
-            return 6
+                # Assign correct form type
+                    k1_form_type[ein_num] = (
+                        "1065" if is_1065 else
+                        "1120S" if is_1120s else
+                        "1041" if is_1041 else
+                        k1_form_type.get(ein_num, "1065")
+                    )
 
-        # 6. Basis worksheets
-        if "basis worksheet" in t:
-            return 7
-        if "at-risk basis" in t:
-            return 7
+                    # Extract company / partnership name
+                    company = extract_k1_company(tiered)
 
-        # 7. Continuation statements
-        if "continuation" in t:
-            return 8
 
-        # 8. Fallback → leave last
-        return 99
 
-    # Score every page
-    scored = []
-    for (p, idx, _) in pages:
-        text = extract_text(p, idx)
-        score = get_score(text)
-        scored.append((score, p, idx))
+                    k1_pages.setdefault(ein_num, []).append((path, i, "K-1"))
+                    if company:
+                        company = clean_k1_company_name(company)
+                        k1_names[ein_num] = company
 
-    # Sort by score only (KEEP original order if score ties)
-    scored.sort(key=lambda x: x[0])
 
-    # Return sorted as original format
-    return [(p, idx, "K-1") for (_, p, idx) in scored]
-def k1_page_priority(text):
-    t = text.lower()
 
-    # --- TRUE MAIN K-1 FORM PAGE ---
-    if (
-        "schedule k-1" in t
-        and ("form 1065" in t or "form 1120-s" in t or "form 1041" in t)
-        and (
-            "information about the partner" in t
-            or "information about the shareholder" in t
-            or ("part i" in t and "information about" in t)
-        )
-    ):
-        return 1
 
-    # Supplemental info (NOT main)
-    if "supplemental information" in t:
-        return 3
 
-    # Rental real estate pages
-    if "rental real estate" in t:
-        return 4
+                    print(
+                        f"[DEBUG] Unified K-1 page: {os.path.basename(path)} p{i+1} "
+                        f"EIN={ein_num}, Company={company}, Form={k1_form_type[ein_num]}",
+                        file=sys.stderr
+                    )
 
-    # QBI / Section 199A
-    if (
-        "statement a" in t
-        or "section 199a" in t
-        or "qualified business income" in t
-        or "qbi" in t
-    ):
-        return 5
 
-    # Other continuation
-    if "continuation" in t:
-        return 6
-
-    # Fallback last
-    return 99
-def extract_k1_company(text: str) -> str | None:
-    # Normalize line breaks and spaces
-    clean = re.sub(r"[^\w\s,&.'\-]", " ", text)
-    clean = re.sub(r"\s+", " ", clean).strip()
-
-    # 1. Strongest pattern: any line ending with LLC/LP/INC/CORP/etc.
-    multi = re.findall(
-        r"([A-Z][A-Z\s,&.'\-]{2,80}?(?:LLC|L\.L\.C\.|INC|CORP|LP|L\.P\.|LLP|FUND))",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if multi:
-        # choose longest = most complete name
-        return max(multi, key=len).strip()
-
-    # 2. Multi-line OCR-broken names: join consecutive lines
-    lines = text.splitlines()
-    for i in range(len(lines) - 1):
-        joined = (lines[i] + " " + lines[i+1]).strip()
-        m = re.search(
-            r"([A-Z][A-Z\s,&.'\-]{2,80}?(?:LLC|INC|CORP|LP|LLP|FUND))",
-            joined,
-            flags=re.IGNORECASE,
-        )
-        if m:
-            return m.group(1).strip()
-
-    # 3. fallback for things like “Desire Homes North Salem LLC”
-    words = clean.split()
-    for i in range(len(words)):
-        for j in range(i+2, min(i+8, len(words))):
-            segment = " ".join(words[i:j])
-            if re.search(r"(LLC|INC|CORP|LP|LLP)$", segment, flags=re.IGNORECASE):
-                return segment
-
-    return None
-
-def clean_k1_company_name(raw: str) -> str:
-    """
-    Clean K-1 company name by:
-    - Removing multi-line noise ('Name of Partnership', 'Partnership EIN', etc.)
-    - Keeping only the longest block ending with LLC/LP/INC/CORP
-    - Removing leading/trailing garbage
-    """
-
-    if not raw:
-        return None
-
-    import re
-
-    # Collapse newlines → spaces
-    raw = raw.replace("\n", " ")
-    raw = re.sub(r"\s+", " ", raw).strip()
-
-    # Remove known garbage phrases
-    garbage = [
-        "name of partnership",
-        "partnership ein",
-        "information about the partner",
-        "information about the shareholder",
-        "schedule k-1",
-        "form 1065",
-        "form 1120-s",
-        "form 1041"
-    ]
-
-    lower = raw.lower()
-    for g in garbage:
-        if g in lower:
-            # Remove the entire garbage phrase + anything BEFORE it
-            idx = lower.index(g)
-            raw = raw[idx + len(g):].strip()
-            lower = raw.lower()
-
-    # Strong match: pick the longest LLC/INC/CORP/LP ending
-    m = re.findall(
-        r"[A-Za-z0-9& ,.'\-]{3,100}?(?:LLC|L\.L\.C\.|INC|CORP|LP|LLP)",
-        raw,
-        flags=re.IGNORECASE
-    )
-    if m:
-        # choose longest match
-        return max(m, key=len).strip()
-
-    return raw.strip()
+                
