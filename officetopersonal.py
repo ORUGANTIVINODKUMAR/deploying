@@ -7030,6 +7030,8 @@ def merge_with_bookmarks(input_dir, output_pdf, meta_json, dummy=""):
         groups = group_by_type(income)
         for form, grp in sorted(groups.items(), key=lambda kv: get_form_priority(kv[0], 'Income')):
                 # ✅ Run the unified K-1 block FIRST
+            used_labels = set()   # track labels used under each Form node
+
             if form == 'K-1':
 
                 # STEP 1 — Append ALL real K-1 pages FIRST (no bookmarks yet)
@@ -7186,7 +7188,15 @@ def merge_with_bookmarks(input_dir, output_pdf, meta_json, dummy=""):
  
                 print(f"[SSN Tag] {os.path.basename(path)} p{idx+1} → {owner}", file=sys.stderr)
     
-                append_and_bookmark(entry, node, lbl)
+                # >>> NEW DUPLICATE BOOKMARK CONTROL <<<
+                if lbl in used_labels:
+    # Duplicate bookmark → do NOT add a bookmark
+                    append_and_bookmark(entry, node, "", with_bookmark=False)
+                else:
+    # First time using this label → add normally
+                    used_labels.add(lbl)
+                    append_and_bookmark(entry, node, lbl)
+
             
             if stop_after_na:
                 break
@@ -7243,8 +7253,15 @@ def merge_with_bookmarks(input_dir, output_pdf, meta_json, dummy=""):
                     lbl = f"{lbl} – {owner}"
  
                 print(f"[SSN Tag] {os.path.basename(path)} p{idx+1} → {owner}", file=sys.stderr)
-    
-                append_and_bookmark(entry, node, lbl)
+
+                # --- NEW LOGIC: Prevent duplicate bookmarks ---
+                if lbl in used_labels:
+                    # duplicate → append page WITHOUT bookmark
+                    append_and_bookmark(entry, node, "", with_bookmark=False)
+                else:
+                    used_labels.add(lbl)
+                    append_and_bookmark(entry, node, lbl)
+
             if stop_after_na:
                 break
 
